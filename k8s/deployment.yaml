@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: appointment-service
+  labels:
+    app: appointment-service
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: appointment-service
+  template:
+    metadata:
+      labels:
+        app: appointment-service
+    spec:
+      containers:
+      - name: appointment-service
+        image: appointment-service:latest
+        ports:
+        - containerPort: 8004
+        env:
+        - name: DATABASE_URL
+          value: "sqlite:///./appointment.db"
+        - name: PATIENT_SERVICE_URL
+          value: "http://patient-service:8001"
+        - name: DOCTOR_SERVICE_URL
+          value: "http://doctor-service:8002"
+        - name: BILLING_SERVICE_URL
+          value: "http://billing-service:8003"
+        - name: NOTIFICATION_SERVICE_URL
+          value: "http://notification-service:8007"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8004
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8004
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: appointment-service
+spec:
+  selector:
+    app: appointment-service
+  ports:
+  - protocol: TCP
+    port: 8004
+    targetPort: 8004
+  type: ClusterIP
+
