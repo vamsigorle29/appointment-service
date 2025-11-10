@@ -20,7 +20,14 @@ from models import (
 
 logger = structlog.get_logger()
 
-app = FastAPI(title="Appointment Service", version="v1")
+app = FastAPI(
+    title="Appointment Service",
+    version="v1",
+    description="Appointment booking, rescheduling, and cancellation service",
+    openapi_url="/v1/openapi.json",
+    docs_url="/v1/docs",
+    redoc_url="/v1/redoc"
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -108,12 +115,35 @@ async def notify_service(event_type: str, data: dict):
 @app.post("/v1/appointments", response_model=AppointmentResponse, status_code=201)
 async def book_appointment(
     appointment: AppointmentCreate,
-    correlation_id: str = Header(None),
+    correlation_id: Optional[str] = Header(None, alias="X-Correlation-ID"),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     db: Session = Depends(get_db)
 ):
-    """Book a new appointment"""
+    """Book a new appointment (idempotent operation)"""
     if not correlation_id:
         correlation_id = str(uuid4())
+    
+    # Check idempotency - if idempotency key provided, check for existing appointment
+    if idempotency_key:
+        # In a real system, you'd store idempotency_key in the appointment table
+        # For now, we'll use a combination of patient_id, doctor_id, and slot_start as idempotency
+        existing = db.query(Appointment).filter(
+            and_(
+                Appointment.patient_id == appointment.patient_id,
+                Appointment.doctor_id == appointment.doctor_id,
+                Appointment.slot_start == appointment.slot_start,
+                Appointment.status == "SCHEDULED"
+            )
+        ).first()
+        
+        if existing:
+            logger.info(
+                "appointment_already_exists",
+                appointment_id=existing.appointment_id,
+                idempotency_key=idempotency_key,
+                correlation_id=correlation_id
+            )
+            return existing
     
     # Verify patient exists
     if not await verify_patient(appointment.patient_id):
@@ -201,7 +231,7 @@ async def reschedule_appointment(
     appointment_id: int,
     new_slot_start: datetime = Query(...),
     new_slot_end: datetime = Query(...),
-    correlation_id: str = Header(None),
+    correlation_id: Optional[str] = Header(None, alias="X-Correlation-ID"),
     db: Session = Depends(get_db)
 ):
     """Reschedule an appointment"""
@@ -270,7 +300,7 @@ async def reschedule_appointment(
 @app.post("/v1/appointments/{appointment_id}/cancel")
 async def cancel_appointment(
     appointment_id: int,
-    correlation_id: str = Header(None),
+    correlation_id: Optional[str] = Header(None, alias="X-Correlation-ID"),
     db: Session = Depends(get_db)
 ):
     """Cancel an appointment"""
@@ -321,7 +351,7 @@ async def cancel_appointment(
 @app.post("/v1/appointments/{appointment_id}/complete")
 async def complete_appointment(
     appointment_id: int,
-    correlation_id: str = Header(None),
+    correlation_id: Optional[str] = Header(None, alias="X-Correlation-ID"),
     db: Session = Depends(get_db)
 ):
     """Mark appointment as completed"""
@@ -367,7 +397,7 @@ async def complete_appointment(
 @app.post("/v1/appointments/{appointment_id}/noshow")
 async def mark_no_show(
     appointment_id: int,
-    correlation_id: str = Header(None),
+    correlation_id: Optional[str] = Header(None, alias="X-Correlation-ID"),
     db: Session = Depends(get_db)
 ):
     """Mark appointment as no-show"""
